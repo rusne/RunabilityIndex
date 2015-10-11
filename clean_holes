@@ -1,0 +1,76 @@
+import shapefile
+
+def main():
+    IN_FILE = filename('D:\Google Drive\Grad. Thesis - Rusne\shp\Goteborg\OSM_UA\OSM_UA_d_clean_0_s.shp')
+    OUT_FILE = filename('D:\Google Drive\Grad. Thesis - Rusne\shp\Goteborg\OSM_UA\OSM_UA_d_clean_PART_s_clean.shp')
+    print 'reading shapefile'
+    polys = read_shp(IN_FILE)
+    i = 0
+    for poly in polys:
+        pnts = poly.points
+        pid = list(poly.parts) + [len(pnts)] #list of ids of points for parts of polygon
+        new_poly = [pnts[0:pid[1]]] #cleaned polygon
+        start = pid[1]
+        print (len(pid)-2), 'holes found, filtering'
+        for fin in pid[2:]:
+            hole = pnts[start:fin]
+            #hole.reverse()
+            area = get_area_polygon([hole])
+            #print area
+            start = fin
+            if area > 7.3*10**(-9): #90m2
+                new_poly = new_poly + [hole]
+        print ((len(pid)-1) - len(new_poly)), 'holes removed'
+        print 'writing shapefile'
+        write_shp(new_poly, OUT_FILE, i)
+        print 'finished!'
+        i += 1
+
+def read_shp(filename):
+    sf = shapefile.Reader(filename)
+    shapes = sf.shapes() # list of polygons, polygons have attributes
+    sf.shp.close()
+    sf.dbf.close()
+    sf.shx.close()
+    return shapes
+
+def write_shp(polygon,filename, i):
+    filename = filename.replace('PART', '{0}'.format(i))
+    w = shapefile.Writer(shapefile.POLYGON)
+    w.field('road_polygon')
+    w.poly(parts = polygon)
+    w.autoBalance = 1
+    w.record(str('0'))
+    w.save(filename)
+
+def filename(FILE):
+    FILE = FILE.replace('\\','/')
+    FILE = FILE.replace('\r','/r')
+    FILE = FILE.replace('\t','/t')
+    FILE = FILE.replace('\f','/f')
+    return FILE
+    
+def get_area_polygon(polygon): # polygon: a list of lists, where p[0] is outer boundary, all the rest - holes.
+    outter_poly = calc_area(polygon[0])
+    holes = 0.0
+    if len(polygon) > 1:
+        for hole in polygon[1:]:
+            holes = holes + calc_area(hole)
+    total_area = outter_poly - holes
+    return total_area
+
+def calc_area(seq): # function which calculates area of a given polygon wihout holes
+    seq1 = seq[0:(len(seq) - 1)]
+    seq2 = seq[1:]
+    summa = 0.0
+    for x, y in zip(seq1, seq2):
+        summa = summa + (x[0] * y[1] - x[1] * y[0])
+    area = summa / 2
+    if area < 0:
+        area = area * (-1)
+    return area
+    
+    
+if __name__ == "__main__":
+    main()
+    
