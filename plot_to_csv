@@ -1,0 +1,89 @@
+import psycopg2
+import numpy as np
+import scipy.stats
+
+
+def filename(FILE):
+    FILE = FILE.replace('\\','/')
+    FILE = FILE.replace('\r','/r')
+    FILE = FILE.replace('\t','/t')
+    FILE = FILE.replace('\f','/f')
+    return FILE
+
+
+if __name__=="__main__":
+    
+    
+    cities = (('Vilnius', 118), ('Valencia', 137), ('Goteborg', 38))
+    lum = 'lum_500m'
+    nach = 'NACH'
+    operators = ('avg', 'mltp', 'or', 'and')
+    
+    print 'Making database connection...',
+    try: con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+    except psycopg2.DatabaseError, e: print 'Error %s' % e
+    print 'successful.' 
+    
+    for cityname, val in cities:
+        
+        actual = []
+        cur = con.cursor()
+        query = """SELECT 	CASE WHEN rec_usage > {1} THEN 1
+                                ELSE rec_usage / {1}
+                                END
+                                FROM usn_{0};""".format(cityname, float(val))
+        cur.execute(query)
+        for record in cur:
+            actual.append(float(record[0]))
+        
+        greenness = []
+        query = """SELECT (usn_{0}.greenness - m.minimum) / (n.maximum - m.minimum) AS g
+                   FROM usn_{0}, (SELECT min(greenness) AS minimum 
+                                       FROM usn_{0}) AS m,
+                                      (SELECT max(greenness) AS maximum
+                                       FROM usn_{0}) AS n;""".format(cityname)
+        cur.execute(query)
+        for record in cur:
+            greenness.append(float(record[0]))
+            
+        for op in operators:
+                    
+            landusemix = []
+            
+            query = """SELECT {0}, id FROM usn_{1}""".format(lum, cityname)
+            cur.execute(query)
+            for record in cur:
+                landusemix.append(float(record[0]))
+            
+
+            centrality = []
+            query = """SELECT {0}/2, id FROM usn_{1}""".format(nach, cityname)
+            cur.execute(query)
+            for record in cur:
+                centrality.append(float(record[0]))
+                
+            greenness = np.array(greenness)
+            landusemix = np.array(landusemix)
+            centrality = np.array(centrality)
+            actual = np.array(actual)
+            
+            if op == 'avg':
+                potential = (greenness+ landusemix + centrality) / 3
+            elif op == 'mltp':
+                potential = greenness * landusemix * centrality
+            elif op == 'or':
+                potential = np.maximum.reduce([greenness, landusemix, centrality])
+            elif op == 'and':
+                potential = np.minimum.reduce([greenness, landusemix, centrality])
+                
+            f = open(filename('C:\Users\Rusne\Desktop\plots\results_{0}_{1}.txt'.format(cityname, op)), 'w')                        
+            for i, j in zip(actual, potential):
+                line =  '{0}, {1}\n'.format(i, j)
+                f.write(line)
+            print cityname, op
+            f.close()
+        
+    con.close()
+        
+    
+    
