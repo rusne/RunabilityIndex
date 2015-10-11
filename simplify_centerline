@@ -1,0 +1,206 @@
+import fiona
+from shapely.geometry import LineString, mapping
+from shapely.ops import linemerge
+
+class LnStr:    
+    def __init__(self, string):
+        #geometry
+        self.dangle = False
+        lines = []
+        for s in string:
+            lines.append(s.geom)
+            if s.dangle:
+                self.dangle = True
+        try:
+            self.geom = linemerge(lines)
+            self.start = self.geom.coords[0]
+            self.end = self.geom.coords[-1]
+            self.string = string
+            self.valid = True
+        except:
+            print string[0].geom
+        
+    def simplify(self, threshold):
+        self.geom = self.geom.simplify(threshold, preserve_topology=False)
+        
+    def snap(self, point, start):
+        if start:
+            self.geom = LineString(point.coords[:] + self.geom.coords[1:])
+        else:
+            self.geom = LineString(self.geom.coords[:-1] + point.coords[:])
+        self.start = self.geom.coords[0]
+        self.end = self.geom.coords[-1]
+ 
+#linesegment as it read from the shapefile       
+class Seg:
+    def __init__(self, ls):
+        self.geom = LineString(ls['geometry']['coordinates'])
+        #start and end points
+        self.start = ls['geometry']['coordinates'][0]
+        self.end = ls['geometry']['coordinates'][-1]
+        #linestring id
+        self.id = int(ls['id'])
+        self.dangle = False
+        self.joined = False
+
+
+def filename(FILE):
+    FILE = FILE.replace('\\','/')
+    FILE = FILE.replace('\r','/r')
+    FILE = FILE.replace('\t','/t')
+    FILE = FILE.replace('\f','/f')
+    return FILE
+
+if __name__ == "__main__":
+    
+    infile = filename('D:\Google Drive\Grad. Thesis - Rusne\shp\Goteborg\OSM_UA\centerline.shp')
+    outfile = filename('D:\Google Drive\Grad. Thesis - Rusne\shp\Goteborg\OSM_UA\centerline_simple.shp')
+    e0 = 0.002 #min size of dangles
+    e1 = 0.00030 #size of small segments to collapse
+    e2 = 0.00015 #DP with 15m tolerance
+    
+    
+    #read file
+    print "Start of file reading..."
+    invalid_geom = 0
+    with fiona.open(infile, 'r') as c:
+        print "Number of Features (LineStrings): ", c.__len__()
+        LINESEGMENTS = []
+        LINESTRINGS = []
+        all_nodes = dict()
+        while True:
+            try:
+                ls = c.next()
+            except:
+                print "\nFinished reading! {0} of invalid geometries found.\n".format(invalid_geom)
+                break
+            #check if geometry is not invalid (point instead of line)
+            if ls['geometry']['coordinates'][0] == ls['geometry']['coordinates'][-1]:
+                invalid_geom += 1
+                continue
+            #for each line segment, create an instance of a class Seg:
+            l = Seg(ls)
+            LINESEGMENTS.append(l)
+            #and construct topology 
+            all_nodes.setdefault(l.start, []).append(l)
+            all_nodes.setdefault(l.end, []).append(l)
+            
+            #todelete: Helpful counter per thousands:
+            if not(int(ls['id'])%1000):
+                print ls['id'],
+    
+    c.close()
+    
+    #merging line segments between nodes of valence >2 into polylines 
+    print 'Creating topology...'
+    topo = dict() #dictionary for topology
+    for n in all_nodes:
+        
+
+        if len(all_nodes[n]) > 2:
+            for s in all_nodes[n]: #s is segment
+                if not s.joined: #if it is not joined to anything else yet
+                
+                    string = [s]
+                    curr_node = n
+                    string_fin = False
+                    curr_s = s
+                    curr_s.joined = True
+                    while not string_fin:
+                        #print curr_node, all_nodes[curr_node]
+                        if curr_s.start == curr_node:
+                            curr_node = curr_s.end
+                        else:
+                            curr_node = curr_s.start
+                        if len(all_nodes[curr_node]) == 2:
+                            if all_nodes[curr_node][0].joined:
+                                curr_s = all_nodes[curr_node][1]
+                            else:
+                                curr_s = all_nodes[curr_node][0]
+                            string.append(curr_s)
+                            curr_s.joined = True
+                            continue
+                        if len(all_nodes[curr_node]) <> 2:
+                            string_fin = True
+                        if len(all_nodes[curr_node]) == 1:
+                            all_nodes[curr_node][0].dangle = True  #finds a dangling residual and mutes it
+                    linestring = LnStr(string)
+                    LINESTRINGS.append(linestring)
+                    topo.setdefault(linestring.start, []).append(linestring)
+                    topo.setdefault(linestring.end, []).append(linestring)
+    print 'Topology created successfully.'
+    
+    
+    print 'Removing dangles and collapsing short segments...'
+    LINESTRINGScopy = LINESTRINGS[:] #creating a copy of a list, just to traverse it
+    for line in LINESTRINGScopy:
+        if line.geom.length < e0:
+            #if not line.valid:
+            #    continue
+            if line.dangle:
+                #removing a dangle and merging line segments next to it
+                line.valid = False
+                if len(topo[line.start]) == 1:
+                    n = line.end #node to merge
+                else:
+                    n = line.start
+                merge = [] #linestrings to be merged
+                for part in topo[n]:
+                    if part.valid:
+                        merge.append(part)
+                if len(merge) <> 2:
+                    continue
+                else:
+                    merge[0].valid = False
+                    merge[1].valid = False
+                linestring = LnStr(merge)
+                LINESTRINGS.append(linestring)
+                topo.setdefault(linestring.start, []).append(linestring)
+                topo.setdefault(linestring.end, []).append(linestring)
+                
+            elif line.geom.length < e1:
+                #collapsing a short segment
+                line.valid = False
+                pt = line.geom.centroid
+                n = line.end
+                for part in topo[n]:
+                    if part.valid:
+                        if part.start == n:
+                            part.snap(pt, start = True)
+                        else:
+                            part.snap(pt, start = False)
+                        topo.setdefault(pt.coords[0], []).append(part)
+                n = line.start
+                for part in topo[n]:
+                    if part.valid:
+                        if part.start == n:
+                            part.snap(pt, start = True)
+                        else:
+                            part.snap(pt, start = False)
+                        topo.setdefault(pt.coords[0], []).append(part)
+                
+                
+    
+    print '\nSimplifying...'
+    #removing dangles, snapping close points and simplifying linestrings
+    SIMPLIFIED = []
+    for line in LINESTRINGS:
+        if line.valid:
+            line.simplify(e2) 
+            SIMPLIFIED.append(line)
+    print 'Simplification finished successfully.'
+    
+    print '\nWriting shapefiles...' 
+    #write shapefiles
+    with fiona.open(infile, "r") as c:
+            with fiona.open(outfile, 'w', driver=c.driver, crs=c.crs, schema={'geometry': 'LineString', 'properties': [('id', 'int')]}) as output:
+                ID = 0
+                for i in SIMPLIFIED:
+                    geom = mapping(i.geom)
+                    dictionary = {"geometry" : geom, "properties": {'id': ID}}
+                    output.write(dictionary)
+                    ID += 1
+    c.close()
+    print 'Shapefiles are written.'
+            
+    
