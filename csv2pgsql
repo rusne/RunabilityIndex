@@ -1,0 +1,149 @@
+import json
+import psycopg2
+import sys
+import winsound
+import os
+import re
+import datetime
+
+def get_name(value):
+    if """'""" in value: 
+        value = value.replace( """'""", """''""")[1:-1]
+    return value
+    
+def get_dur(value):
+    if len(value) == 1:
+        return '0h:00m:00s' #if there is no duration
+    temp = value.split(':')
+    if len(temp) > 3: #if duration includes days
+        return False
+    if len(temp) == 3:
+        h = re.findall(r'\d+', temp[0])
+        if int(h[0]) > 12: # if duration is more than 12h
+            return False
+    return value.rstrip()
+        
+        
+def get_route(value):
+    try: track = json.loads(value)
+    except: return False
+    path = 'LINESTRING ('
+    if track:
+        count = 0
+        for entry in track:
+            try:
+                lng, lat = entry[u'lng'], entry[u'lat']
+                if off_bounds(lng, lat): #check if in Europe
+                    return False
+                path += '{0} {1},'.format(lng, lat)               
+                count += 1
+            except:
+                continue
+    else:
+        return False
+    if count < 2: #check if track contains at least 3 points
+        return False
+    path = path[:-1] + ')'
+    return path
+    
+def off_bounds(x,y,boundaries = (-31.2156, 27.6375,  40.1669, 80.76)):
+    offbounds = False
+    if x < boundaries[0]:
+        x = boundaries[0]
+        offbounds = True
+    if y < boundaries[1]:
+        y = boundaries[1]
+        offbounds = True
+    if x > boundaries[2]:
+        x = boundaries[2]
+        offbounds = True
+    if y > boundaries[3]:
+        y = boundaries[3]
+        offbounds = True
+    return offbounds
+
+def off_date(time):
+    temp = time.split(',')
+    year = int(temp[1].split()[0])
+    if year < 2014 or year > 2015:
+        return True
+    month = MonthToNum(temp[0].split()[0])
+    if year == 2014 and month < 4:
+        return True
+    elif year == 2015 and month > datetime.date.today().month:
+        return True    
+    return False
+
+def MonthToNum(mon):
+    return{ 'Jan' : 1,
+            'Feb' : 2,
+            'Mar' : 3,
+            'Apr' : 4,
+            'May' : 5,
+            'Jun' : 6,
+            'Jul' : 7,
+            'Aug' : 8,
+            'Sep' : 9, 
+            'Oct' : 10,
+            'Nov' : 11,
+            'Dec' : 12}[mon]
+
+if __name__=="__main__":
+    
+    try: con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+    except psycopg2.DatabaseError, e: print 'Error %s' % e
+    for csv in os.listdir('C:\Users\Rusne\Desktop\Data'):
+        if csv.endswith(".csv"):
+            filename = csv
+        else:
+            continue
+        f = open('C:\Users\Rusne\Desktop\Data\{0}'.format(filename), 'r')
+        #line = f.readline() #header
+        line = f.readline()
+        while line:
+            line = line.split('\t')
+            if len(line) < 7:
+                line = f.readline()
+                continue
+            id_ = line[0]
+            type_ = line[1]
+            date = line[2][1:-1]
+            if off_date(date):
+                line = f.readline()
+                continue
+            name = get_name(line[3])
+            route = get_route(line[4])
+            distance = line[5]
+            if not distance:
+                distance = 0
+            duration = get_dur(line[6])
+            if not route or not duration or distance < 0.5: #distance must be more than 0.5km
+                line = f.readline()
+                continue
+            try:
+                print id_, filename
+                cur = con.cursor()    
+                cur.execute("""INSERT INTO routes_eu VALUES ({0}, {1}, '{2}', {3}, {4}, '{5}', ST_GeomFromText('{6}', 4326))""".format(id_, type_, date, name, distance, duration, route))
+                con.commit()
+                    
+                        
+                
+            
+            except psycopg2.DatabaseError, e:
+                print 'Error %s' % e    
+                sys.exit(1)
+            line = f.readline()
+            
+    try:
+        cur = con.cursor()
+        old_isolation_level = con.isolation_level
+        con.set_isolation_level(0)
+        cur.execute('VACUUM ANALYZE routes_eu')
+        con.commit()
+        con.set_isolation_level(old_isolation_level)
+    except psycopg2.DatabaseError, e: print 'Error %s' % e        
+        
+    if con:
+        print con.notices
+        con.close()
+    winsound.Beep(1000,500)
