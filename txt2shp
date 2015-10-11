@@ -1,0 +1,184 @@
+import shapefile
+import psycopg2
+import sys
+from subprocess import call
+
+def main(ResFILE, RefFILE):
+    infile = open(ResFILE)
+    (lines, corr_x, corr_y) = read_txt(infile, RefFILE)
+    #find coordinate transformation
+    lines_trans = trans_coor(lines, corr_x, corr_y)
+    infile.close()
+    
+#    write_shp(lines_trans)
+#    clean_db()
+#    write_ref_psql(RefFILE) #CHANGE FILENAME Unable to open D:/Google.shp or D:/Google.SHP.
+#    write_psql(lines_trans)
+    write_shp_psql()
+    print 'Finished!'
+    
+def trans_coor(lines, corr_x, corr_y):
+    print 'doing coordinate transformation'
+    lines_trans = []
+    for l in lines:
+        line_trans = []
+        for p in l:
+            p_trans = (p[0] + corr_x, p[1] + corr_y)
+            line_trans.append(p_trans)
+        lines_trans.append(line_trans)
+    print len(lines_trans), 'voronoi edges found in a .txt file'
+    return lines_trans
+    
+def read_txt(infile, reffile):
+    print 'reading .txt file'
+    lines = []
+    allptsx = []
+    allptsy = []
+    odd = True
+    for l in infile:
+            if odd: #reads every second line to avoid duplicates (output is double edge)
+                odd = False
+                continue
+            else:
+                odd = True
+            line = []
+            delimiter = ' '
+            l = l.strip()
+            l = l.split(delimiter)
+            n = len(l)/2
+            for p in range(n):
+                point = ((float(l[p*2]))/10000000, (float(l[p*2+1]))/10000000)
+                line.append(point)
+                allptsx.append(point[0])
+                allptsy.append(point[1])
+            lines.append(line)
+    ref = shapefile.Reader(RefFILE)
+    corr_x = ref.bbox[2] - max(allptsx)
+    corr_y = ref.bbox[3] - max(allptsy)
+    #print ref.bbox
+    #print min(allptsx), min(allptsy), max(allptsx), max(allptsy)
+    return (lines, corr_x, corr_y)
+           
+
+def filename(FILE):
+    FILE = FILE.replace('\\','/')
+    FILE = FILE.replace('\r','/r')
+    FILE = FILE.replace('\t','/t')
+    FILE = FILE.replace('\f','/f')
+    FILE = FILE.replace('\v','/v')
+    return FILE
+    
+def write_shp(lines):
+    #write shapefile
+    print 'writing shapefile'
+    w = shapefile.Writer(shapefile.POLYLINE)
+    w.field('ID','N',len(str(len(lines))),0)
+    for i in range(len(lines)):
+        w.line(parts = [lines[i]])
+        w.record(i)
+    w.save("C:\Users\Rusne\Desktop\centerline_all.shp")
+    
+def write_psql(lines):
+    #write lines into the temp table of the database
+    print 'writing all voronoi edges into a database'
+    try: 
+        con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+        cur = con.cursor()
+        while True:
+                run = raw_input("\nDo you want to DROP TABLE temp_centerline?????????????? Y/N")
+                if  run == 'Y':
+                    cur.execute('DROP TABLE IF EXISTS temp_centerline')
+                    con.commit()
+                    break
+                elif run == 'N':
+                    break
+        cur.execute('CREATE TABLE IF NOT EXISTS temp_centerline (geom geometry (LINESTRING, 4326))')
+        con.commit()
+    except psycopg2.DatabaseError, e:
+        print 'Error %s' % e
+        sys.exit(1)
+    
+    count = 0
+    for line in lines:
+        count += 1
+        if count%1000 == 0:
+            print count, '...',
+#        if count <= 283417:
+#            continue #to continue writing the file
+        query = 'LINESTRING ('
+        for pt in line:
+            lng, lat = pt[0], pt[1]
+            query += '{0} {1},'.format(lng, lat)
+        query = query[:-1] + ')'
+        #print query
+        try:
+            cur = con.cursor()    
+            cur.execute("""INSERT INTO temp_centerline VALUES (ST_GeomFromText('{0}', 4326))""".format(query))
+            con.commit()
+        except psycopg2.DatabaseError, e:
+            print 'Error %s' % e    
+            sys.exit(1)
+    print con.notices
+    print 'creating index'
+    try:
+        cur.execute("""CREATE INDEX temp_centerline_geom_idx
+                        ON temp_centerline
+                        USING gist (geom);""")
+    except psycopg2.DatabaseError, e:
+        print 'Error %s' % e
+    con.close()
+        
+def write_ref_psql(filename):
+    #writes reference polygon into a temp database table
+    print 'writing reference polygon into a database'
+    cstring = """shp2pgsql -I -s 4326 "{0}" rusne.temp_road_polygon | psql -d geodata -h pakhuis.tudelft.nl -U rusne """.format(filename)
+    print cstring    
+    try:
+        return_code =  call(cstring, shell=True)
+    except return_code <> 0:
+        print return_code
+        sys.exit()
+    
+def write_shp_psql():
+    #writes shapefile centerline based on sql query
+    print 'extracting centerline'
+    cstring = """pgsql2shp -f "C:\Users\Rusne\Desktop\centerline_clean" -h pakhuis.tudelft.nl -u rusne -P abkeudxo geodata
+    "SELECT innerline.geom, innerline.cities 
+    FROM (SELECT temp_centerline.geom, temp_centerline.cities
+          FROM temp_centerline, temp_road_polygon
+          WHERE ST_within(temp_centerline.geom, temp_road_polygon.geom)) AS innerline
+          JOIN temp_road_polygon
+          ON not ST_DWithin(ST_Boundary(temp_road_polygon.geom), innerline.geom, 0.000001);" """
+    cstring = cstring.replace('\n', ' ')
+    print cstring
+    try:
+        return_code = call(cstring, shell=True)
+    except return_code <> 0:
+        print return_code
+        sys.exit()
+                
+def clean_db():
+    #cleans temporary database tables
+    print 'cleaning database'
+    try: 
+        con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+        cur = con.cursor()
+        while True:
+            run = raw_input("\nDo you want to DROP TABLE temp_road_polygon?????????????? Y/N")
+            if  run == 'Y':
+                cur.execute('DROP TABLE IF EXISTS temp_road_polygon')
+                con.commit()
+                break
+            elif run == 'N':
+                break
+    except psycopg2.DatabaseError, e: print 'Error %s' % e
+
+if __name__ == "__main__":
+    #input files: result and reference
+    ResFILE = filename('C:\Users\Rusne\Desktop\result.txt')
+    RefFILE = filename('C:\Users\Rusne\Desktop\temp\clips\ua_roads.shp')
+    #ResFILE = filename('C:\Users\Rusne\Desktop\result_test.txt')
+    #RefFILE = filename('C:\Users\Rusne\Desktop\shp\test.shp')
+    #ResFILE = filename('C:\Users\Rusne\Desktop\result_roads.txt')
+    #RefFILE = filename('C:\Users\Rusne\Desktop\shp\subset\roads_subset_simple_0.00001.shp')
+    main(ResFILE, RefFILE)
