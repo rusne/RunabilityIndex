@@ -1,0 +1,117 @@
+require 'net/https'
+require 'nokogiri'
+require 'csv'
+require 'time_difference'
+require 'net/smtp'
+
+def parse_wout(w)
+    puts w
+    #start = Time.now
+    uri = URI.parse "https://www.endomondo.com/workouts/#{w}"
+    http = Net::HTTP.new(uri.host, uri.port)
+    http.read_timeout = 500
+    http.use_ssl = true
+    req = Net::HTTP::Get.new uri.path
+    begin
+        r = http.request(req)
+    rescue Exception => msg
+        puts msg
+        sleep(60)
+        return
+    end
+    str = ""
+    #fin1 = Time.now
+ 
+    if r.code == '200'
+    raw_body = r.body
+    doc = Nokogiri::XML(raw_body)
+    j = " "
+    return if doc.css('.sport-name').text != 'Running' and doc.css('.sport-name').text != 'Walking'
+    return if (doc.css("script").text.include? '"data":') == FALSE
+    name = doc.css('.profile-badge h1').text
+    str << "#{w}"
+    str << "\t"
+    str << "'#{doc.css('.sport-name').text}'"
+    str << "\t"
+    str << "'#{doc.css('.date-time').text}'"
+    str << "\t"
+    str << "'#{name}'"
+    str << "\t"
+        doc.css("script").each do |s|
+            if s.text.include? '"data":'
+            begin
+                j = s.text.gsub("\n", "") 
+                j = j.scan(/"data":(.*?\])/)[0][0]
+            rescue
+                next
+            end
+            end
+        end
+        str << "#{j}"
+        str << "\t"
+        nodes = %w(distance duration)
+        nodes.each do |node|
+            t = doc.css(".side-tabs li.#{node} .value").text
+            t = t.to_f if node == 'distance'
+            str << "#{t}"
+            str << "\t"
+        end
+
+    end
+    #fin2 = Time.now
+    #puts TimeDifference.between(start, fin1).in_seconds
+    #puts TimeDifference.between(start, fin2).in_seconds
+    str.chomp!("\t")
+    str << "\n"
+end
+
+if __FILE__ == $0
+    start = Time.now
+
+    s = 478600000 #433847073 #434000000 #430438417 #430600000 #427200000 #43288330 #starting number - bigger one
+    f = 478300000 #433700000 #430300000 #426900000 #43200000 #ending number - smaller one
+    date = '02.28' #the date month.day
+    part = 0 #should always be 0, except when you terminate yourself, then check for the last part in "Data" and add 1+, SAVE ALL.
+
+    count = 0
+    max = s
+    i = f
+    outfile = File.open("C:\\Users\\Rusne\\Desktop\\Data\\raw_data.#{date}_#{part}.csv", 'w')
+    until max == i do
+        max -= 1
+        str = parse_wout(max)
+        if str
+            if str.length > 1
+                #puts str
+                outfile.write(str)
+                count += 1
+            end
+        end
+        if count == 10000
+            part += 1
+            outfile.close
+            outfile = File.open("C:\\Users\\Rusne\\Desktop\\Data\\raw_data.#{date}_#{part}.csv", 'w')
+            count = 0
+        end
+    end
+    outfile.close
+    #puts str
+    #time elapsed
+    fin = Time.now
+    puts TimeDifference.between(start, fin).in_seconds
+    message = <<EOF
+From: DATA ACQUISITION CODE <xxxx@gmail.com>
+To: X <xxxx@yahoo.com>
+Subject: Data is ready
+
+WARNING.
+Data acquisition for id #{s} to #{f} has finished at #{fin}.
+
+EOF
+
+    smtp = Net::SMTP.new 'smtp.gmail.com', 587
+    smtp.enable_starttls
+    smtp.start('gmail.com', 'xxxx@gmail.com', 'Password', :login)
+    smtp.send_message message, 'xxxx@gmail.com', 'xxxx@yahoo.com'
+    smtp.finish
+    end
