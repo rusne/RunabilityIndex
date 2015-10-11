@@ -1,0 +1,480 @@
+import psycopg2
+import sys
+import copy
+import fiona
+import numpy as np
+import math
+from shapely.geometry import Point, LineString, mapping
+
+
+class LnStr:
+    #network edge object - linestring
+    def __init__(self, e):
+        #geometry
+        self.geom = postgis2shapely(e[1])
+        self.start = self.geom.coords[0]
+        self.end = self.geom.coords[-1]
+        #id in a DB
+        self.id = e[0]
+        
+    def reverse(self):
+        self.start, self.end = self.end, self.start
+    
+    def vector(self):
+        x, y = self.end[0], self.end[1]
+        x1, y1 = self.start[0], self.start[1]
+        v  = (x - x1, y - y1)  
+        return v        
+        
+class Path:
+    #best path for the GPS to be snapped to
+    def __init__(self, p, dev, topo):
+        self.path = p #all path visited
+        self.last = p[-1] #the last segments
+        self.get_con(topo)
+        self.pts_vis = 1 #points visited
+        self.dev = dev #total deviation from the path
+        
+    def get_con(self, topo):
+        self.connections = []
+        C = topo[self.last.start] + topo[self.last.end]
+        for c in C:
+            if c <> self.last:
+                self.connections.append(c)        
+        
+    def extend_path(self, seg, dev):
+        self.path.append(seg)
+        self.last = seg
+        self.get_con(topo)
+        self.pts_vis += 1
+        self.dev += dev
+        
+        
+def postgis2shapely(string):
+    #transforms postgis MULTILINESTRING into shapely LineString object
+    string = string.lstrip('MULTILINESTRING')
+    string = string.strip('()')
+    coords = string.split(',')
+    geom = []
+    for coord in coords:
+        try:
+            coord = coord.split()
+            x = float(coord[0])
+            y = float(coord[1])
+            geom.append((x,y))
+        except:
+            print 'Multipart geometry found at', coord
+#            run = raw_input("\nDo you want to continue? Y/N")
+#            if  run == 'Y':
+#                continue
+#            elif run == 'N':
+#                sys.exit()
+    geom = LineString(geom)
+    return geom
+    
+def shapely2postgis(pts):
+    #transforms shapely list of POINT into postgis LINESTRING object
+    coords = ''
+    for p in pts:
+        coords += str(p.x) + ' ' + str(p.y) + ','
+    coords = coords.strip(',')
+    string = "ST_GeomFromText('LINESTRING({0})', 4326)".format(coords)
+    return string
+    
+    
+def median(lst):
+    lst = sorted(lst)
+    if len(lst) < 1:
+            return None
+    if len(lst) %2 == 1:
+            return lst[((len(lst)+1)/2)-1]
+    if len(lst) %2 == 0:
+            return float(sum(lst[(len(lst)/2)-1:(len(lst)/2)+1]))/2.0
+            
+def unit_vector(vector):
+    return vector / np.linalg.norm(vector)
+
+def angle_between(v1, v2):
+    # Returns the angle in radians between vectors 'v1' and 'v2'
+    v1_u = unit_vector(v1)
+    v2_u = unit_vector(v2)
+    dot = np.dot(v1_u, v2_u)
+    angle = np.arccos(dot)
+    if  dot < 0:
+        angle = angle * (-1)
+    if np.isnan(angle):
+        if (v1_u == v2_u).all():
+            return 0.0
+        else:
+            return np.pi
+    return angle
+    
+def update_avg(avg, n, count):
+    new_avg = (float(avg) * count + n) / (count+1)
+    return new_avg
+    
+def filterGPSpts(pts):
+    #filters the outliers of the GPS points
+    dists = []
+    map_dists = dict()
+    points = [Point(pts[0])] #transforms coordinates into Point geometries
+    for i in range(len(pts)-1):
+        p1 = points[i]
+        p2 = Point(pts[i+1])
+        points.append(p2)
+        dist = p1.distance(p2)
+        dists.append(dist)
+        map_dists[(p1, p2)] = dist
+    med = median(dists)
+    filtered = []
+    max_dev = 0
+    
+    for d in dists:
+        if abs(d - med) > max_dev:
+            max_dev = d
+#    return (max_dev / med)
+    
+    
+    #check first point first
+    if map_dists[(points[0], points[1])] < 3*med:
+        if max_dev/med > 3:
+            print map_dists[(points[0], points[1])]/med,
+        filtered.append(points[0])
+    for i in range(len(points)-2):
+        dist1 = map_dists[(points[i], points[i+1])]
+        dist2 = map_dists[(points[i+1], points[i+2])]
+        if max_dev/med >3:
+            print dist1/med, dist2/med
+        if  dist1 > 3*med or dist2 > 3*med:
+            if points[i].distance(points[i+2]) < min(dist1, dist2):
+                continue            
+        else:
+            filtered.append(points[i+1])
+    #check last point:
+    if map_dists[(points[-2], points[-1])] < 3*med:
+        filtered.append(points[-2]) 
+    return points
+           
+        
+def closest_geom(pt, geoms, res = 1):
+    #makes a list of all distances and returns the 2 closest ones
+    dists = []
+    for geom in geoms:
+        d = pt.distance(geom.geom)
+        dists.append((d, [geom]))
+    dists.sort()
+    if res == 1:
+        return dists[0]
+    elif res == 2:
+        return (dists[0], dists[1])
+    else:
+        print '...something went wrong...'
+        
+def extra_check(pts, curr, alt):
+    dev_c = 0
+    dev_a = 0
+    #print pts[0], pts[-1], curr.id, alt.id
+    for pt in pts:
+        p = Point(pt)
+        dev_c += p.distance(curr.geom)
+        dev_a += p.distance(alt.geom)
+    if dev_c < dev_a:
+    #    print 'True'
+        return True
+    else:
+    #    print 'False'
+        return False
+    
+#A* for the shortest path
+def snap(curr, alt, pts, topo):
+    snapped = 0
+    Extra_Check = True #extra check is needed if the segment is decided based on only 3 points
+    
+    while curr.pts_vis < len(pts):
+        closest_seg = closest_geom(Point(pts[curr.pts_vis]), [curr.last] + curr.connections)
+        snapped += 1
+        curr.pts_vis += 1
+        curr.dev += closest_seg[0]
+        if closest_seg[1][0] == curr.last:
+            continue
+        else:
+            break
+    search_space = [alt.last] + alt.connections
+    if curr.last in search_space:
+        search_space.remove(curr.last)
+    while alt.pts_vis < curr.pts_vis:
+        closest_seg = closest_geom(Point(pts[alt.pts_vis]), search_space)
+        alt.pts_vis += 1
+        alt.dev += closest_seg[0]
+        
+#    print pts[curr.pts_vis], curr.last.id, alt.last.id
+#    print len(search_space), len(alt.connections)
+#    run = raw_input("\nDo you want a new point? Y/N")
+#    if run == 'N':
+#        sys.exit()
+    
+    if snapped < 3 and (curr.pts_vis + 3) < len(pts) and (curr.pts_vis - 2) > 0:
+        Extra_Check = extra_check(pts[(curr.pts_vis-2):(curr.pts_vis + 3)], curr.last, alt.last)
+        
+    if curr.dev < alt.dev and Extra_Check:
+        #check if all points are snapped        
+        if curr.pts_vis == len(pts):
+            return curr
+        #continue with the two best connections
+        (c, a) = closest_geom(Point(pts[curr.pts_vis]), curr.connections, 2)
+        new_curr = copy.deepcopy(curr)
+        new_curr.extend_path(c[1][0], c[0])
+        new_alt = copy.deepcopy(curr)
+        new_alt.extend_path(a[1][0], a[0])
+        return snap(new_curr, new_alt, pts, topo)
+        
+    else:
+        #snap the remaining points, if any:
+        while alt.pts_vis < len(pts):
+            closest_seg = closest_geom(Point(pts[alt.pts_vis]), [alt.last] + alt.connections)
+            alt.pts_vis += 1
+            alt.dev += closest_seg[0]
+            if closest_seg[1][0] == alt.last:
+                continue
+            else:
+                break  
+        #check if all points are snapped             
+        if alt.pts_vis == len(pts):
+            return alt
+        #continue with the other 2 connections
+        (c, a) = closest_geom(Point(pts[alt.pts_vis]), alt.connections, 2)
+        new_curr = copy.deepcopy(alt)
+        new_curr.extend_path(c[1][0], c[0])
+        new_alt = copy.deepcopy(alt)
+        new_alt.extend_path(a[1][0], a[0])
+        return snap(new_curr, new_alt, pts, topo)
+  
+def filename(FILE):
+    FILE = FILE.replace('\\','/')
+    FILE = FILE.replace('\r','/r')
+    FILE = FILE.replace('\t','/t')
+    FILE = FILE.replace('\f','/f')
+    return FILE  
+    
+def write_shp(path, infile):
+    print '\nWriting shapefile...' 
+    outfile = filename('C:\Users\Rusne\Desktop\temp\GPSpath.shp')
+    #write shapefiles
+    with fiona.open(infile, "r") as c:
+            with fiona.open(outfile, 'w', driver=c.driver, crs=c.crs, schema={'geometry': 'LineString', 'properties': [('id', 'int')]}) as output:
+                for i in path.path:
+                    ID = int(i.id)
+                    geom = mapping(i.geom)
+                    dictionary = {"geometry" : geom, "properties": {'id': ID}}
+                    output.write(dictionary)                
+    c.close()
+    print 'Shapefiles are written.'
+    
+def write_shp_GPS(route, infile):
+    print '\nWriting GPS shapefile...' 
+    outfile = filename('C:\Users\Rusne\Desktop\temp\GPSroute.shp')
+    #write shapefiles
+    with fiona.open(infile, "r") as c:
+            with fiona.open(outfile, 'w', driver=c.driver, crs=c.crs, schema={'geometry': 'LineString', 'properties': [('id', 'int')]}) as output:
+                ID = 0
+                geom = mapping(route)
+                dictionary = {"geometry" : geom, "properties": {'id': ID}}
+                output.write(dictionary)                
+    c.close()
+    print 'GPS Shapefiles are written.'
+    
+if __name__=="__main__":
+    
+    citycode = 'LT001C'
+    cityname = 'Vilnius'
+    
+#    citycode = 'ES003C'
+#    cityname = 'Valencia'
+    
+#    citycode = 'SE002C'
+#    cityname = 'Goteborg'
+    
+    infile = filename('D:\Google Drive\Grad. Thesis - Rusne\shp\{0}\osm_ua\centerline_topo.shp'.format(cityname))
+    
+    print 'Making database connection...',
+    try: con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+    except psycopg2.DatabaseError, e: print 'Error %s' % e
+    print 'successful.'    
+    
+    cur = con.cursor()
+    cur.execute("""DROP VIEW IF EXISTS routes_city;
+                    CREATE VIEW routes_city AS
+                    SELECT *
+                    FROM routes_eu , (SELECT *
+                                    FROM cities_eu
+                                    WHERE cities_eu.urau_city_ = '{0}') AS city
+                    WHERE ST_Contains(city.geom, routes_eu.route);""".format(citycode))
+    cur.execute('SELECT DISTINCT name FROM routes_city;')
+    usernames = cur.fetchall()
+    db_update = dict()
+    
+    avg_topo = 0 #average nmber of street segments ran
+    avg_ang = 0    #average total angle of turns taken
+    abs_dev = 0 #average ratio between the median and an abs_dev
+    max_dev = 0 #maximum ratio between the median and an abs_dev
+    st_dev = [] #standard deviation between the median and an absolute deviation
+    count = 0
+    
+    for username in usernames:
+        name = username[0]
+        print '\nProcessing GPS logs of user {0}.'.format(name)
+        net_edges = dict()
+        try:
+            cur.execute("SELECT id, ST_AsText(route) FROM routes_city WHERE name = '{0}';".format(name))
+        except psycopg2.DatabaseError, e:
+            print 'Error %s' % e
+            con.rollback()
+            continue
+        GPS_logs = cur.fetchall()
+        for log in GPS_logs:
+            print '\nSnapping GPS log no.', log[0]
+            
+#            if log[0] <> 365314257:
+#                continue
+            
+            #read and filter the GPS track
+            track = postgis2shapely(log[1])
+            write_shp_GPS(track, infile)
+            points = filterGPSpts(track.coords)
+            
+            
+#            dev_ratio = filterGPSpts(track.coords)
+#            if dev_ratio > 6:
+#                continue
+#            abs_dev = update_avg(abs_dev, dev_ratio, count)
+#            st_dev.append(dev_ratio)
+#            if dev_ratio > max_dev:
+#                max_dev = dev_ratio
+#            print dev_ratio
+#            count += 1
+#            if count == 100:
+#                mean = sum(st_dev) / len(st_dev)
+#                print mean
+#                for i in range(len(st_dev)):
+#                    st_dev[i] = abs(mean-st_dev[i])**2
+#                st_dev = sum(st_dev)/len(st_dev)
+#                print max_dev, abs_dev, math.sqrt(st_dev)
+#                sys.exit()
+#            while True:
+#                run = raw_input("\nDo you want a new route? Y/N")
+#                if  run == 'Y':
+#                    lets_run = True
+#                    break
+#                elif run == 'N':
+#                    lets_run = False
+#                    sys.exit()
+#                    break
+#            continue
+        
+        
+#            while True:
+#                run = raw_input("\nDo you want a to write it down? Y/N")
+#                if  run == 'Y':
+#                    lets_run = True
+#                    break
+#                elif run == 'N':
+#                    lets_run = False
+#                    sys.exit()
+#                    break
+#            continue
+            if len(track.coords) <> len(points):
+                route = shapely2postgis(points)
+            else:
+                route = 'r.route'
+            
+            #retrieve piece of the network which lies within bbox of route expanded by x units (0,001 = 100m)
+            x = 0.001
+            query = """SELECT USN_{3}.id, ST_AsText(USN_{3}.geom)
+                             FROM (select routes_city.id, routes_city.route from routes_city where routes_city.id = {0}) as r, USN_{3}
+                             where ST_Intersects(ST_Expand(ST_Envelope({1}), {2}), USN_{3}.geom);""".format(log[0], route, x, cityname)
+            cur.execute(query)
+            network = cur.fetchall()
+            
+            #construct local topology
+            topo = dict()
+            LINESTRINGS = []
+            for edge in network:
+                #transform into LnStr object            
+                linestring = LnStr(edge)
+                topo.setdefault(linestring.start, []).append(linestring)
+                topo.setdefault(linestring.end, []).append(linestring)
+                LINESTRINGS.append(linestring)
+    
+            #choosing potential start and end segments
+            try:
+                start = closest_geom(points[0], LINESTRINGS, 2)
+                curr = Path(start[0][1], start[0][0], topo) #current best path
+                alt = Path(start[1][1], start[1][0], topo) #alternative best path
+                best_path = snap(curr, alt, points, topo)
+            except:
+                continue
+            
+            v2 = False
+            ang = 0
+            for p in best_path.path:
+                print p.id,
+                net_edges.setdefault(p.id, True)
+                if (not v2) and (len(best_path.path) > 1):
+                    if p.start == best_path.path[1].start or p.start == best_path.path[1].end:
+                        p.reverse()
+                    endpoint = p.end
+                elif p.end == endpoint:
+                    p.reverse()
+                v1 = p.vector()
+                if v2:
+                    #check if the vectors need to be reversed:
+                    angle = angle_between(v1, v2)
+                    if angle < 0 or angle > (np.pi / 2):
+                        ang += 1
+                v2 = v1
+                endpoint = p.end
+            avg_ang = update_avg(avg_ang, ang, count)
+            avg_topo = update_avg(avg_topo, len(best_path.path), count)
+            count += 1
+            print '\n', len(best_path.path), best_path.dev / len(points) * 111000, avg_topo, avg_ang, count
+            
+            write_shp(best_path, infile)
+            while True:
+                run = raw_input("\nDo you want a new route? Y/N")
+                if  run == 'Y':
+                    lets_run = True
+                    break
+                elif run == 'N':
+                    lets_run = False
+                    sys.exit()
+                    break
+        continue
+        for i in iter(net_edges):
+            db_update.setdefault(i, 0)
+            db_update[i] += 1
+#        if not lets_run:
+#            print '\nThen you are finished.'
+#            sys.exit()
+#            break
+
+    print 'All routes are snapped.'
+    print 'Average segments passed are:', avg_topo
+    print 'Average angle passed is:', avg_ang
+            
+    #update database with values
+    print '\nUpdating database...',
+    while True:
+        run = raw_input("\nDo you want to update the database? Y/N")
+        if  run == 'Y':
+            lets_run = True
+            break
+        elif run == 'N':
+            lets_run = False
+            break
+    if not lets_run:
+        print '\nThen you are finished.'
+        sys.exit()
+    for i in iter(db_update):
+        cur.execute("UPDATE usn_{0} SET rec_usage = {2} WHERE id = {1}".format(cityname, i, db_update[i]))
+        con.commit()
+    print 'successful.'
