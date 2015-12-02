@@ -53,8 +53,8 @@ def filename(FILE):
 
 if __name__ == "__main__":
     
-    infile = filename('D:\Google Drive\Grad. Thesis - Rusne\shp\Goteborg\OSM_UA\centerline.shp')
-    outfile = filename('D:\Google Drive\Grad. Thesis - Rusne\shp\Goteborg\OSM_UA\centerline_simple.shp')
+    infile = filename('...\centerline.shp')
+    outfile = filename('...\centerline_simple.shp')
     e0 = 0.002 #min size of dangles
     e1 = 0.00030 #size of small segments to collapse
     e2 = 0.00015 #DP with 15m tolerance
