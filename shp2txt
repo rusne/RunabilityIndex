@@ -1,7 +1,7 @@
 import shapefile
 
 #PARAMETERS TO DEFINE:
-FILE = 'C:\Users\Rusne\Desktop\temp\clips\ua_roads.shp' #file of polygon
+FILE = '...\ua_roads.shp' #file of polygon
 FILE = FILE.replace('\\','/')
 FILE = FILE.replace('\r','/r')
 FILE = FILE.replace('\t','/t')
@@ -17,7 +17,7 @@ pid = list(sf.shapes()[0].parts) + [len(pnts)] #list of ids of points for parts 
 print pnts[0] == pnts[pid[1]-1] #True
 
 #write file
-outfile = open('C:\Users\Rusne\Desktop\input.txt', 'w')
+outfile = open('...\input.txt', 'w')
 outfile.write('0\n')
 segs = len(pnts) - len(pid) + 1
 outfile.write('{0}\n'.format(segs))
