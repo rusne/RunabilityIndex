@@ -258,7 +258,7 @@ def filename(FILE):
     
 def write_shp(path, infile):
     print '\nWriting shapefile...' 
-    outfile = filename('C:\Users\Rusne\Desktop\temp\GPSpath.shp')
+    outfile = filename('...\GPSpath.shp')
     #write shapefiles
     with fiona.open(infile, "r") as c:
             with fiona.open(outfile, 'w', driver=c.driver, crs=c.crs, schema={'geometry': 'LineString', 'properties': [('id', 'int')]}) as output:
@@ -272,7 +272,7 @@ def write_shp(path, infile):
     
 def write_shp_GPS(route, infile):
     print '\nWriting GPS shapefile...' 
-    outfile = filename('C:\Users\Rusne\Desktop\temp\GPSroute.shp')
+    outfile = filename('...\GPSroute.shp')
     #write shapefiles
     with fiona.open(infile, "r") as c:
             with fiona.open(outfile, 'w', driver=c.driver, crs=c.crs, schema={'geometry': 'LineString', 'properties': [('id', 'int')]}) as output:
@@ -294,10 +294,10 @@ if __name__=="__main__":
 #    citycode = 'SE002C'
 #    cityname = 'Goteborg'
     
-    infile = filename('D:\Google Drive\Grad. Thesis - Rusne\shp\{0}\osm_ua\centerline_topo.shp'.format(cityname))
+    infile = filename('...\centerline_topo.shp'.format(cityname))
     
     print 'Making database connection...',
-    try: con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+    try: con = psycopg2.connect(database='dbname', user='username', password = 'password', host = 'host.com')          
     except psycopg2.DatabaseError, e: print 'Error %s' % e
     print 'successful.'    
     
