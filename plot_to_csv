@@ -76,7 +76,7 @@ if __name__=="__main__":
             elif op == 'and':
                 potential = np.minimum.reduce([greenness, landusemix, centrality])
                 
-            f = open(filename('C:\Users\Rusne\Desktop\plots\results_{0}_{1}.txt'.format(cityname, op)), 'w')                        
+            f = open(filename('...\plots\results_{0}_{1}.txt'.format(cityname, op)), 'w')                        
             for i, j in zip(actual, potential):
                 line =  '{0}, {1}\n'.format(i, j)
                 f.write(line)
