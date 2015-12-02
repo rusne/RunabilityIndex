@@ -76,13 +76,13 @@ def write_shp(lines):
     for i in range(len(lines)):
         w.line(parts = [lines[i]])
         w.record(i)
-    w.save("C:\Users\Rusne\Desktop\centerline_all.shp")
+    w.save("...\centerline_all.shp")
     
 def write_psql(lines):
     #write lines into the temp table of the database
     print 'writing all voronoi edges into a database'
     try: 
-        con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+        con = psycopg2.connect(database='dbname', user='username', password = 'password', host = 'host.com')          
         cur = con.cursor()
         while True:
                 run = raw_input("\nDo you want to DROP TABLE temp_centerline?????????????? Y/N")
@@ -131,7 +131,7 @@ def write_psql(lines):
 def write_ref_psql(filename):
     #writes reference polygon into a temp database table
     print 'writing reference polygon into a database'
-    cstring = """shp2pgsql -I -s 4326 "{0}" rusne.temp_road_polygon | psql -d geodata -h pakhuis.tudelft.nl -U rusne """.format(filename)
+    cstring = """shp2pgsql -I -s 4326 "{0}" username.temp_road_polygon | psql -d dbname -h host.com -U username """.format(filename)
     print cstring    
     try:
         return_code =  call(cstring, shell=True)
@@ -142,7 +142,7 @@ def write_ref_psql(filename):
 def write_shp_psql():
     #writes shapefile centerline based on sql query
     print 'extracting centerline'
-    cstring = """pgsql2shp -f "C:\Users\Rusne\Desktop\centerline_clean" -h pakhuis.tudelft.nl -u rusne -P abkeudxo geodata
+    cstring = """pgsql2shp -f "...\centerline_clean" -h host.com -u username -P password dbname
     "SELECT innerline.geom, innerline.cities 
     FROM (SELECT temp_centerline.geom, temp_centerline.cities
           FROM temp_centerline, temp_road_polygon
@@ -161,7 +161,7 @@ def clean_db():
     #cleans temporary database tables
     print 'cleaning database'
     try: 
-        con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+        con = psycopg2.connect(database='dbname', user='username', password = 'password', host = 'host.com')          
         cur = con.cursor()
         while True:
             run = raw_input("\nDo you want to DROP TABLE temp_road_polygon?????????????? Y/N")
@@ -175,10 +175,10 @@ def clean_db():
 
 if __name__ == "__main__":
     #input files: result and reference
-    ResFILE = filename('C:\Users\Rusne\Desktop\result.txt')
-    RefFILE = filename('C:\Users\Rusne\Desktop\temp\clips\ua_roads.shp')
-    #ResFILE = filename('C:\Users\Rusne\Desktop\result_test.txt')
-    #RefFILE = filename('C:\Users\Rusne\Desktop\shp\test.shp')
-    #ResFILE = filename('C:\Users\Rusne\Desktop\result_roads.txt')
-    #RefFILE = filename('C:\Users\Rusne\Desktop\shp\subset\roads_subset_simple_0.00001.shp')
+    ResFILE = filename('...\result.txt')
+    RefFILE = filename('...\ua_roads.shp')
+    #ResFILE = filename('...\result_test.txt')
+    #RefFILE = filename('...\test.shp')
+    #ResFILE = filename('...\result_roads.txt')
+    #RefFILE = filename('...\roads_subset_simple_0.00001.shp')
     main(ResFILE, RefFILE)
