@@ -20,7 +20,7 @@ if __name__=="__main__":
     operators = ('avg', 'mltp', 'or', 'and')
     
     print 'Making database connection...',
-    try: con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+    try: con = psycopg2.connect(database='dbname', user='username', password = 'password', host = 'host.com')     
     except psycopg2.DatabaseError, e: print 'Error %s' % e
     print 'successful.' 
     
@@ -94,7 +94,7 @@ if __name__=="__main__":
             elif op == 'and':
                 potential = np.minimum.reduce([greenness, landusemix, centrality, density])
                 
-            f = open(filename('C:\Users\Rusne\Desktop\plots\results_{0}_{1}.txt'.format(cityname, op)), 'w')                        
+            f = open(filename('...\plots\results_{0}_{1}.txt'.format(cityname, op)), 'w')                        
             for i, j in zip(actual, potential):
                 line =  '{0}, {1}\n'.format(i, j)
                 f.write(line)
