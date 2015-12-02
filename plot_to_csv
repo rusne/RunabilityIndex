@@ -20,7 +20,7 @@ if __name__=="__main__":
     operators = ('avg', 'mltp', 'or', 'and')
     
     print 'Making database connection...',
-    try: con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+    try: con = psycopg2.connect(database='dbname', user='username', password = 'password', host = 'host.com')     
     except psycopg2.DatabaseError, e: print 'Error %s' % e
     print 'successful.' 
     
