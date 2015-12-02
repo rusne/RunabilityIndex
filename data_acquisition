@@ -76,7 +76,7 @@ if __FILE__ == $0
     count = 0
     max = s
     i = f
-    outfile = File.open("C:\\Users\\Rusne\\Desktop\\Data\\raw_data.#{date}_#{part}.csv", 'w')
+    outfile = File.open("...\\Data\\raw_data.#{date}_#{part}.csv", 'w')
     until max == i do
         max -= 1
         str = parse_wout(max)
@@ -90,7 +90,7 @@ if __FILE__ == $0
         if count == 10000
             part += 1
             outfile.close
-            outfile = File.open("C:\\Users\\Rusne\\Desktop\\Data\\raw_data.#{date}_#{part}.csv", 'w')
+            outfile = File.open("...\\Data\\raw_data.#{date}_#{part}.csv", 'w')
             count = 0
         end
     end
