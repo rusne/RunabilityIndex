@@ -90,14 +90,14 @@ def MonthToNum(mon):
 
 if __name__=="__main__":
     
-    try: con = psycopg2.connect(database='geodata', user='rusne', password = 'abkeudxo', host = 'pakhuis.tudelft.nl')     
+    try: con = psycopg2.connect(database='dbname', user='uername', password = 'password', host = 'host.com')     
     except psycopg2.DatabaseError, e: print 'Error %s' % e
-    for csv in os.listdir('C:\Users\Rusne\Desktop\Data'):
+    for csv in os.listdir('...\Data'):
         if csv.endswith(".csv"):
             filename = csv
         else:
             continue
-        f = open('C:\Users\Rusne\Desktop\Data\{0}'.format(filename), 'r')
+        f = open('...\Data\{0}'.format(filename), 'r')
         #line = f.readline() #header
         line = f.readline()
         while line:
